@@ -205,15 +205,21 @@
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  border: 1px solid rgba(255,255,255,0.14);
-  background: rgba(0,0,0,0.24);
-  color: var(--foreground, #fff);
+  border: 1px solid rgba(180,255,238,0.22);
+  background: linear-gradient(180deg, rgba(2,18,18,0.92), rgba(0,0,0,0.72));
+  color: #f7fff8;
+  -webkit-text-fill-color: #f7fff8;
+  caret-color: #00f5d4;
   padding: 0.55rem 0.65rem;
   outline: none;
+  text-shadow: 0 0 10px rgba(0,245,212,0.10);
 }
+.hops-input::placeholder,
+.hops-textarea::placeholder { color: rgba(247,255,248,0.46); -webkit-text-fill-color: rgba(247,255,248,0.46); }
+.hops-select option { background: #071313; color: #f7fff8; }
 .hops-input:focus,
 .hops-select:focus,
-.hops-textarea:focus { border-color: rgba(0,245,212,0.7); box-shadow: 0 0 0 2px rgba(0,245,212,0.12); }
+.hops-textarea:focus { border-color: rgba(0,245,212,0.86); box-shadow: 0 0 0 2px rgba(0,245,212,0.18), 0 0 28px rgba(0,245,212,0.10); background: linear-gradient(180deg, rgba(3,28,28,0.96), rgba(0,0,0,0.78)); }
 .hops-textarea { resize: vertical; line-height: 1.45; }
 .hops-route-warn { color: #ffbd76; font-size: 0.75rem; }
 .hops-route-ok { color: #8cffc5; font-size: 0.75rem; }

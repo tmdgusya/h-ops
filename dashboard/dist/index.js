@@ -529,7 +529,7 @@
     const [dossierOpen, setDossierOpen] = hooks.useState(false);
 
     hooks.useEffect(function () {
-      if (ticketId) setDossierOpen(true);
+      if (ticketId && selectionNonce > 0) setDossierOpen(true);
     }, [ticketId, selectionNonce]);
 
     hooks.useEffect(function () {
@@ -669,10 +669,6 @@
       setError(null);
       return api("/ops-board").then(function (res) {
         setBoard(res);
-        if (!keepSelection && !selectedId) {
-          const first = (res.columns || []).flatMap(function (c) { return c.tickets || []; })[0];
-          if (first) setSelectedId(first.id);
-        }
       }).catch(function (err) { setError(err.message || String(err)); });
     }
 

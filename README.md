@@ -56,9 +56,9 @@ Click any ticket to open a large dossier focused on run health, worker output, l
 
 A short Hermes Kanban workflow recording is included for context: creating/operating on Kanban-backed agent work, then inspecting that work through H-OPS.
 
-<video src="assets/hermes-kanban.mp4" controls width="100%"></video>
+[![Watch the Hermes Kanban demo](assets/h-ops-main-board.png)](assets/hermes-kanban.mp4)
 
-If your Markdown viewer does not render embedded video, open [assets/hermes-kanban.mp4](assets/hermes-kanban.mp4).
+[Watch the Hermes Kanban demo video](assets/hermes-kanban.mp4).
 
 ---
 

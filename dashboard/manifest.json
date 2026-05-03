@@ -1,0 +1,11 @@
+{
+  "name": "h-ops",
+  "label": "H-OPS",
+  "description": "Palantir-style agent operations cockpit over Hermes Kanban tickets, runs, events, and handoffs.",
+  "icon": "Radar",
+  "version": "0.1.0",
+  "tab": { "path": "/h-ops", "position": "after:kanban" },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

@@ -38,11 +38,11 @@ H-OPS gives Kanban an operations cockpit:
 
 ---
 
-## Screenshots
+## Screenshots and demo
 
 ### Mission Control
 
-A high-level board with health, queue counts, profile load, filters, and status strips.
+A high-level board with health, queue counts, profile load, filters, status strips, progress, and muted dark-teal action gradients.
 
 ![H-OPS mission control](assets/h-ops-main-board.png)
 
@@ -51,6 +51,14 @@ A high-level board with health, queue counts, profile load, filters, and status 
 Click any ticket to open a large dossier focused on run health, worker output, logs, and history.
 
 ![H-OPS ticket dossier](assets/h-ops-ticket-dossier.png)
+
+### Hermes Kanban demo video
+
+A short Hermes Kanban workflow recording is included for context: creating/operating on Kanban-backed agent work, then inspecting that work through H-OPS.
+
+<video src="assets/hermes-kanban.mp4" controls width="100%"></video>
+
+If your Markdown viewer does not render embedded video, open [assets/hermes-kanban.mp4](assets/hermes-kanban.mp4).
 
 ---
 
@@ -136,17 +144,10 @@ The UI uses a dark operations-console style:
 
 > Requires a working Hermes Agent installation with dashboard plugin support.
 
-Clone this repository into your Hermes plugins directory:
+Use the Hermes plugin installer. It installs the GitHub repository into your Hermes plugin directory and can enable it in the same step:
 
 ```bash
-mkdir -p ~/.hermes/plugins
-git clone https://github.com/tmdgusya/h-ops.git ~/.hermes/plugins/h-ops
-```
-
-Enable the plugin:
-
-```bash
-hermes plugins enable h-ops
+hermes plugins install tmdgusya/h-ops --enable
 ```
 
 If the dashboard is already running, rescan plugins:
@@ -155,7 +156,7 @@ If the dashboard is already running, rescan plugins:
 curl http://127.0.0.1:9119/api/dashboard/plugins/rescan
 ```
 
-If backend API routes do not appear immediately, restart the dashboard:
+If backend API routes do not appear immediately, restart the dashboard because plugin APIs are mounted when the dashboard starts:
 
 ```bash
 hermes dashboard
@@ -165,6 +166,14 @@ Then open:
 
 ```text
 http://127.0.0.1:9119/h-ops
+```
+
+For local development, clone the repository yourself and then enable it:
+
+```bash
+mkdir -p ~/.hermes/plugins
+git clone https://github.com/tmdgusya/h-ops.git ~/.hermes/plugins/h-ops
+hermes plugins enable h-ops
 ```
 
 ---
@@ -236,7 +245,8 @@ h-ops/
 │   └── test_ops_health.py
 ├── assets/
 │   ├── h-ops-main-board.png
-│   └── h-ops-ticket-dossier.png
+│   ├── h-ops-ticket-dossier.png
+│   └── hermes-kanban.mp4
 └── README.md
 ```
 

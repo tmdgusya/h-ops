@@ -2,6 +2,10 @@
 
 > A dark, tactical operations console for Hermes Agent Kanban: health, assignment, progress, logs, output, and run history in one place.
 
+[![Hermes Kanban demo preview](assets/hermes-kanban-preview.gif)](assets/hermes-kanban.mp4)
+
+[Watch the compact Hermes Kanban demo video](assets/hermes-kanban.mp4).
+
 ![H-OPS main board](assets/h-ops-main-board.png)
 
 H-OPS is a third-party **Hermes Agent dashboard plugin** that turns the built-in Hermes Kanban queue into an operator-facing cockpit.
@@ -54,11 +58,9 @@ Click any ticket to open a large dossier focused on run health, worker output, l
 
 ### Hermes Kanban demo video
 
-A short Hermes Kanban workflow recording is included for context: creating/operating on Kanban-backed agent work, then inspecting that work through H-OPS.
+The animated Hermes Kanban preview is intentionally placed at the very top of this README so the workflow is visible in the first viewport. The linked MP4 is compressed for GitHub-friendly viewing.
 
-[![Watch the Hermes Kanban demo](assets/h-ops-main-board.png)](assets/hermes-kanban.mp4)
-
-[Watch the Hermes Kanban demo video](assets/hermes-kanban.mp4).
+[Open the compact Hermes Kanban demo video](assets/hermes-kanban.mp4).
 
 ---
 
@@ -246,6 +248,7 @@ h-ops/
 ├── assets/
 │   ├── h-ops-main-board.png
 │   ├── h-ops-ticket-dossier.png
+│   ├── hermes-kanban-preview.gif
 │   └── hermes-kanban.mp4
 └── README.md
 ```

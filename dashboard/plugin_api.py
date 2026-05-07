@@ -313,6 +313,105 @@ def _board_ops_health(columns: List[Dict[str, Any]], counts: Dict[str, int]) -> 
     }
 
 
+def _linked_task_brief(row: sqlite3.Row) -> Dict[str, Any]:
+    task = _row_dict(row)
+    task["skills"] = _json_loads(task.get("skills"), [])
+    run_hint = task.get("current_run_id")
+    return {
+        "id": task.get("id"),
+        "title": task.get("title") or task.get("id"),
+        "status": task.get("status") or "unknown",
+        "assignee": task.get("assignee") or None,
+        "priority": int(task.get("priority") or 0),
+        "current_run_id": run_hint,
+        "created_at": task.get("created_at"),
+        "last_heartbeat_at": task.get("last_heartbeat_at"),
+        "skills": task.get("skills") or [],
+        "output_preview": _compact_text(task.get("result"), task.get("body"), limit=180),
+    }
+
+
+def _dependency_tasks(conn: sqlite3.Connection, task_id: str) -> Dict[str, List[Dict[str, Any]]]:
+    parent_rows = conn.execute(
+        """
+        SELECT t.*
+        FROM task_links l
+        JOIN tasks t ON t.id = l.parent_id
+        WHERE l.child_id = ?
+        ORDER BY t.status = 'done' DESC, t.priority DESC, t.created_at DESC
+        """,
+        (task_id,),
+    ).fetchall()
+    child_rows = conn.execute(
+        """
+        SELECT t.*
+        FROM task_links l
+        JOIN tasks t ON t.id = l.child_id
+        WHERE l.parent_id = ?
+        ORDER BY t.status = 'done', t.priority DESC, t.created_at DESC
+        """,
+        (task_id,),
+    ).fetchall()
+    return {
+        "parents": [_linked_task_brief(row) for row in parent_rows],
+        "children": [_linked_task_brief(row) for row in child_rows],
+    }
+
+
+def _dependency_summary(conn: sqlite3.Connection, task_id: str) -> Dict[str, Any]:
+    linked = _dependency_tasks(conn, task_id)
+    parents = linked["parents"]
+    children = linked["children"]
+    blocking = [item for item in parents if item.get("status") != "done"]
+    parents_done = len(parents) - len(blocking)
+    waiting_children = [item for item in children if item.get("status") in {"todo", "triage"}]
+    ready_children = [item for item in children if item.get("status") == "ready"]
+    running_children = [item for item in children if item.get("status") == "running"]
+    next_assignees: List[str] = []
+    for child in children:
+        assignee = child.get("assignee")
+        if assignee and assignee not in next_assignees:
+            next_assignees.append(str(assignee))
+
+    if blocking:
+        state = "waiting"
+        names = []
+        for item in blocking[:2]:
+            names.append(str(item.get("assignee") or item.get("title") or item.get("id")))
+        label = "Waiting for " + " + ".join(names)
+        if len(blocking) > 2:
+            label += f" +{len(blocking) - 2}"
+    elif children:
+        state = "unlocks"
+        if next_assignees:
+            label = "Unlocks " + " + ".join(next_assignees[:2])
+            if len(next_assignees) > 2:
+                label += f" +{len(next_assignees) - 2}"
+        else:
+            label = f"Unlocks {len(children)} ticket" + ("" if len(children) == 1 else "s")
+    elif parents:
+        state = "mixed"
+        label = f"Parents {parents_done}/{len(parents)} done"
+    else:
+        state = "none"
+        label = "No chain"
+
+    return {
+        "parent_count": len(parents),
+        "parents_done": parents_done,
+        "parents_blocking": len(blocking),
+        "child_count": len(children),
+        "children_waiting": len(waiting_children),
+        "children_ready": len(ready_children),
+        "children_running": len(running_children),
+        "next_assignees": next_assignees,
+        "blocked_by": blocking[:4],
+        "unlocks": children[:4],
+        "label": label,
+        "state": state,
+    }
+
+
 def _task_ops_card(conn: sqlite3.Connection, row: sqlite3.Row, include_log: bool = False) -> Dict[str, Any]:
     task = _row_dict(row)
     now = int(time.time())
@@ -341,6 +440,7 @@ def _task_ops_card(conn: sqlite3.Connection, row: sqlite3.Row, include_log: bool
         "output_preview": output_preview,
         "progress": _progress(task, run),
         "health": _ticket_health(task, run, log_info),
+        "dependency_summary": _dependency_summary(conn, task["id"]),
     })
     return task
 
@@ -380,44 +480,151 @@ def _timeline(conn: sqlite3.Connection, limit: int = 40, task_id: Optional[str] 
     return events
 
 
+def _profile_metadata() -> Dict[str, Dict[str, Any]]:
+    try:
+        from hermes_cli.profiles import list_profiles  # type: ignore
+    except Exception:
+        return {}
+    try:
+        profiles = list_profiles()
+    except Exception as exc:  # pragma: no cover - defensive for mixed Hermes versions
+        log.debug("h-ops profile metadata unavailable: %s", exc)
+        return {}
+    meta: Dict[str, Dict[str, Any]] = {}
+    for profile in profiles or []:
+        name = getattr(profile, "name", None) or (profile.get("name") if isinstance(profile, dict) else None)
+        if not name:
+            continue
+        def get(field: str) -> Any:
+            return getattr(profile, field, None) if not isinstance(profile, dict) else profile.get(field)
+        meta[str(name)] = {
+            "name": str(name),
+            "on_disk": True,
+            "path": str(get("path")) if get("path") else None,
+            "gateway_running": bool(get("gateway_running")),
+            "model": get("model"),
+            "provider": get("provider"),
+            "has_env": get("has_env"),
+            "skill_count": int(get("skill_count") or 0),
+            "alias_path": str(get("alias_path")) if get("alias_path") else None,
+        }
+    return meta
+
+
+def _agent_availability(agent: Dict[str, Any]) -> str:
+    name = agent.get("name")
+    if not agent.get("on_disk") and name != "unassigned":
+        return "unconfigured"
+    if int(agent.get("stale_running_count") or 0) > 0:
+        return "stale"
+    if int(agent.get("running_count") or 0) > 0:
+        return "running"
+    if int(agent.get("blocked_count") or 0) > 0:
+        return "blocked"
+    if int(agent.get("ready_count") or 0) > 0:
+        return "queued"
+    if agent.get("has_env") is False:
+        return "offline"
+    if agent.get("gateway_running") is False:
+        return "stopped"
+    return "idle"
+
+
 def _agents(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     try:
         known = kanban_db.known_assignees(conn)
     except Exception:
         known = []
     known_names = {str(a.get("name") if isinstance(a, dict) else a) for a in known if a}
+    profile_meta = _profile_metadata()
+    all_names = {n for n in known_names if n} | set(profile_meta.keys())
     rows = conn.execute(
         """
         SELECT COALESCE(assignee, '') AS name,
                COUNT(*) AS task_count,
+               SUM(CASE WHEN status = 'triage' THEN 1 ELSE 0 END) AS triage_count,
+               SUM(CASE WHEN status = 'todo' THEN 1 ELSE 0 END) AS todo_count,
                SUM(CASE WHEN status = 'ready' THEN 1 ELSE 0 END) AS ready_count,
                SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running_count,
-               SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) AS blocked_count
+               SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) AS blocked_count,
+               SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done_count,
+               SUM(CASE WHEN status = 'running' AND (last_heartbeat_at IS NULL OR (? - last_heartbeat_at) > 300) THEN 1 ELSE 0 END) AS stale_running_count,
+               MAX(last_heartbeat_at) AS task_last_seen_at
         FROM tasks
         WHERE status != 'archived'
         GROUP BY COALESCE(assignee, '')
-        """
+        """,
+        (int(time.time()),),
     ).fetchall()
-    by_name: Dict[str, Dict[str, Any]] = {
-        n: {"name": n, "source": "profile", "task_count": 0, "ready_count": 0, "running_count": 0, "blocked_count": 0, "last_seen_at": None}
-        for n in known_names if n
-    }
+    by_name: Dict[str, Dict[str, Any]] = {}
+
+    def base_entry(name: str, source: str) -> Dict[str, Any]:
+        meta = profile_meta.get(name, {})
+        return {
+            "name": name,
+            "source": source,
+            "task_count": 0,
+            "triage_count": 0,
+            "todo_count": 0,
+            "ready_count": 0,
+            "running_count": 0,
+            "blocked_count": 0,
+            "done_count": 0,
+            "stale_running_count": 0,
+            "last_seen_at": None,
+            "on_disk": bool(meta.get("on_disk")),
+            "path": meta.get("path"),
+            "gateway_running": meta.get("gateway_running"),
+            "model": meta.get("model"),
+            "provider": meta.get("provider"),
+            "has_env": meta.get("has_env"),
+            "skill_count": meta.get("skill_count"),
+            "alias_path": meta.get("alias_path"),
+        }
+
+    for name in all_names:
+        by_name[name] = base_entry(name, "profile")
+
     for row in rows:
         name = row["name"] or "unassigned"
-        entry = by_name.setdefault(name, {"name": name, "source": "task-history", "last_seen_at": None})
+        entry = by_name.setdefault(name, base_entry(name, "task-history"))
+        if entry["source"] == "profile" and not entry.get("on_disk"):
+            entry["source"] = "task-history"
+        task_last_seen = row["task_last_seen_at"]
         entry.update({
             "task_count": int(row["task_count"] or 0),
+            "triage_count": int(row["triage_count"] or 0),
+            "todo_count": int(row["todo_count"] or 0),
             "ready_count": int(row["ready_count"] or 0),
             "running_count": int(row["running_count"] or 0),
             "blocked_count": int(row["blocked_count"] or 0),
+            "done_count": int(row["done_count"] or 0),
+            "stale_running_count": int(row["stale_running_count"] or 0),
+            "last_seen_at": task_last_seen,
         })
     run_rows = conn.execute(
         "SELECT COALESCE(profile, '') AS profile, MAX(COALESCE(last_heartbeat_at, started_at)) AS last_seen_at FROM task_runs GROUP BY COALESCE(profile, '')"
     ).fetchall()
     for row in run_rows:
         name = row["profile"] or "unassigned"
-        by_name.setdefault(name, {"name": name, "source": "run-history", "task_count": 0, "ready_count": 0, "running_count": 0, "blocked_count": 0})["last_seen_at"] = row["last_seen_at"]
-    return sorted(by_name.values(), key=lambda a: (a["name"] == "unassigned", -(a.get("running_count") or 0), a["name"]))
+        entry = by_name.setdefault(name, base_entry(name, "run-history"))
+        if row["last_seen_at"] and (entry.get("last_seen_at") is None or int(row["last_seen_at"]) > int(entry.get("last_seen_at") or 0)):
+            entry["last_seen_at"] = row["last_seen_at"]
+    labels = {
+        "running": "running",
+        "queued": "queued",
+        "blocked": "blocked",
+        "stale": "stale worker",
+        "idle": "idle",
+        "unconfigured": "missing profile",
+        "offline": "env missing",
+        "stopped": "profile stopped",
+    }
+    for entry in by_name.values():
+        availability = _agent_availability(entry)
+        entry["availability"] = availability
+        entry["availability_label"] = labels.get(availability, availability)
+    return sorted(by_name.values(), key=lambda a: (a["name"] == "unassigned", a.get("availability") not in {"stale", "running", "queued", "blocked"}, -(a.get("running_count") or 0), a["name"]))
 
 
 def _assignee_names(conn: sqlite3.Connection) -> List[str]:
@@ -441,6 +648,7 @@ class CreateTicketPayload(BaseModel):
     triage: bool = False
     tenant: Optional[str] = None
     skills: Optional[List[str]] = None
+    parents: List[str] = []
 
 
 class AssignPayload(BaseModel):
@@ -503,6 +711,7 @@ def ticket(task_id: str) -> Dict[str, Any]:
         comments = conn.execute("SELECT * FROM task_comments WHERE task_id = ? ORDER BY created_at DESC", (task_id,)).fetchall()
         parents = conn.execute("SELECT parent_id FROM task_links WHERE child_id = ? ORDER BY parent_id", (task_id,)).fetchall()
         children = conn.execute("SELECT child_id FROM task_links WHERE parent_id = ? ORDER BY child_id", (task_id,)).fetchall()
+        dependency_tasks = _dependency_tasks(conn, task_id)
         ticket_item = _task_ops_card(conn, task, include_log=True)
         event_items = _timeline(conn, limit=100, task_id=task_id)
         artifacts = _artifact_candidates(
@@ -523,6 +732,9 @@ def ticket(task_id: str) -> Dict[str, Any]:
             "dependencies": {
                 "parents": [row["parent_id"] for row in parents],
                 "children": [row["child_id"] for row in children],
+                "parent_tasks": dependency_tasks["parents"],
+                "child_tasks": dependency_tasks["children"],
+                "summary": ticket_item.get("dependency_summary") or _dependency_summary(conn, task_id),
             },
         }
 
@@ -549,6 +761,7 @@ def create_ticket(payload: CreateTicketPayload) -> Dict[str, Any]:
                 tenant=payload.tenant,
                 created_by="h-ops",
                 skills=payload.skills,
+                parents=payload.parents or (),
             )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -573,6 +786,66 @@ def assign_ticket(task_id: str, payload: AssignPayload) -> Dict[str, Any]:
 def agents() -> Dict[str, Any]:
     with _conn() as conn:
         return {"agents": _agents(conn), "assignees": _assignee_names(conn)}
+
+
+def _edge_state(parent: Dict[str, Any], child: Dict[str, Any]) -> str:
+    if parent.get("status") != "done":
+        return "waiting"
+    if child.get("status") in {"running", "done", "blocked"}:
+        return str(child.get("status"))
+    return "unlocked"
+
+
+def _workflow_graph(conn: sqlite3.Connection, limit: int = 200, focus: Optional[str] = None, depth: int = 2) -> Dict[str, Any]:
+    limit = max(1, min(int(limit or 200), 500))
+    params: List[Any] = []
+    where = "WHERE status != 'archived'"
+    if focus:
+        # Keep v1 intentionally simple: include focus plus immediate neighbours.
+        ids = {focus}
+        for row in conn.execute("SELECT parent_id FROM task_links WHERE child_id = ?", (focus,)).fetchall():
+            ids.add(row["parent_id"])
+        for row in conn.execute("SELECT child_id FROM task_links WHERE parent_id = ?", (focus,)).fetchall():
+            ids.add(row["child_id"])
+        placeholders = ",".join("?" for _ in ids)
+        where = f"WHERE id IN ({placeholders})"
+        params.extend(sorted(ids))
+    params.append(limit)
+    rows = conn.execute(
+        f"""
+        SELECT * FROM tasks
+        {where}
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        params,
+    ).fetchall()
+    nodes = [_linked_task_brief(row) for row in rows]
+    by_id = {node["id"]: node for node in nodes}
+    if not by_id:
+        return {"nodes": [], "edges": [], "generated_at": int(time.time())}
+    placeholders = ",".join("?" for _ in by_id)
+    link_rows = conn.execute(
+        f"""
+        SELECT parent_id, child_id
+        FROM task_links
+        WHERE parent_id IN ({placeholders}) AND child_id IN ({placeholders})
+        ORDER BY parent_id, child_id
+        """,
+        [*by_id.keys(), *by_id.keys()],
+    ).fetchall()
+    edges = []
+    for row in link_rows:
+        parent = by_id.get(row["parent_id"], {})
+        child = by_id.get(row["child_id"], {})
+        edges.append({"parent_id": row["parent_id"], "child_id": row["child_id"], "state": _edge_state(parent, child)})
+    return {"nodes": nodes, "edges": edges, "generated_at": int(time.time()), "focus": focus, "depth": depth}
+
+
+@router.get("/workflow-graph")
+def workflow_graph(limit: int = Query(200, ge=1, le=500), focus: Optional[str] = None, depth: int = Query(2, ge=1, le=6)) -> Dict[str, Any]:
+    with _conn() as conn:
+        return _workflow_graph(conn, limit=limit, focus=focus, depth=depth)
 
 
 @router.get("/events")

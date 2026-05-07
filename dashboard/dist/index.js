@@ -177,24 +177,76 @@
 
   function ProgressBar({ ticket }) {
     const progress = ticket.progress || { percent: 0, label: "unknown" };
+    const pct = Math.max(0, Math.min(100, progress.percent || 0));
     return h("div", { className: "hops-progress-wrap", title: progress.label },
       h("div", { className: "hops-progress-label" }, "Progress"),
-      h("div", { className: "hops-progress-line" },
-        h("i", { style: { width: Math.max(0, Math.min(100, progress.percent || 0)) + "%" } })
+      h("div", { className: "hops-progress-line", "aria-label": "Progress " + pct + "%" },
+        h("i", { style: { width: pct + "%" } }),
+        h("em", null, pct + "%")
       ),
       h("div", { className: "hops-progress-copy" },
         h("span", null, progress.label),
-        h("b", null, (progress.percent || 0) + "%")
+        h("b", null, pct + "%")
       )
     );
   }
 
-  function Composer({ assignees, onCreated }) {
+  function DependencyBadge({ summary, quiet }) {
+    summary = summary || {};
+    const state = summary.state || "none";
+    if (quiet && state === "none") return null;
+    const parentCount = Number(summary.parent_count || 0);
+    const parentsDone = Number(summary.parents_done || 0);
+    const childCount = Number(summary.child_count || 0);
+    const label = summary.label || (state === "none" ? "No chain" : "Dependency chain");
+    return h("div", { className: "hops-dependency-badge is-" + state, title: label },
+      h("div", { className: "hops-chain-glyph" }, parentCount ? parentsDone + "/" + parentCount : "—", h("span", null, "→"), childCount || "—"),
+      h("div", { className: "hops-chain-copy" },
+        h("strong", null, label),
+        h("small", null, parentCount ? "parents " + parentsDone + "/" + parentCount + " done · next " + childCount : (childCount ? "next " + childCount + " ticket" + (childCount === 1 ? "" : "s") : "standalone ticket"))
+      )
+    );
+  }
+
+  function ChainRail({ dependencies, currentTicket }) {
+    dependencies = dependencies || {};
+    const parents = dependencies.parent_tasks || [];
+    const children = dependencies.child_tasks || [];
+    const summary = dependencies.summary || (currentTicket || {}).dependency_summary || {};
+    function node(task, role) {
+      task = task || {};
+      return h("article", { key: role + "-" + (task.id || "current"), className: "hops-chain-node is-" + role + " hops-chain-node-" + (task.status || "unknown") },
+        h("span", { className: statusClass(task.status || "unknown") }, task.status || "unknown"),
+        h("div", null,
+          h("strong", null, task.title || task.id || "Untitled ticket"),
+          h("small", null, (task.assignee || "unassigned") + " · " + shortId(task.id))
+        )
+      );
+    }
+    return h("section", { className: "hops-chain-rail" },
+      h("div", { className: "hops-panel-bar" },
+        h("div", { className: "hops-panel-title" }, "Chain rail"),
+        h(DependencyBadge, { summary: summary })
+      ),
+      parents.length || children.length ? h("div", { className: "hops-chain-track" },
+        parents.length ? h("div", { className: "hops-chain-group" }, parents.map(function (task) { return node(task, "parent"); })) : h("div", { className: "hops-chain-empty" }, "No upstream parent"),
+        h("div", { className: "hops-chain-edge" }, "↓ unlocks"),
+        node(currentTicket, "current"),
+        h("div", { className: "hops-chain-edge" }, "↓ next"),
+        children.length ? h("div", { className: "hops-chain-group" }, children.map(function (task) { return node(task, "child"); })) : h("div", { className: "hops-chain-empty" }, "No downstream child yet")
+      ) : h("div", { className: "hops-chain-empty" }, "No dependency chain yet. This ticket can run independently.")
+    );
+  }
+
+  function Composer({ assignees, tickets, onCreated }) {
+    tickets = tickets || [];
+    const parentOptions = tickets.filter(function (ticket) { return ticket && ticket.id && ticket.status !== "archived"; });
     const [open, setOpen] = hooks.useState(false);
     const [title, setTitle] = hooks.useState("");
     const [body, setBody] = hooks.useState("");
     const [assignee, setAssignee] = hooks.useState("");
     const [priority, setPriority] = hooks.useState(0);
+    const [parentId, setParentId] = hooks.useState("");
     const [triage, setTriage] = hooks.useState(false);
     const [busy, setBusy] = hooks.useState(false);
     const [error, setError] = hooks.useState(null);
@@ -209,8 +261,9 @@
         assignee: assignee || null,
         priority: Number(priority) || 0,
         triage: !!triage,
+        parents: parentId ? [parentId] : [],
       }).then(function (res) {
-        setTitle(""); setBody(""); setAssignee(""); setPriority(0); setTriage(false);
+        setTitle(""); setBody(""); setAssignee(""); setPriority(0); setParentId(""); setTriage(false);
         onCreated(res.ticket && res.ticket.id);
       }).catch(function (err) { setError(err.message || String(err)); })
         .finally(function () { setBusy(false); });
@@ -244,6 +297,16 @@
           className: "hops-input hops-priority-input",
           title: "Priority",
         })
+      ),
+      h("label", { className: "hops-parent-picker" },
+        h("span", null, "Parent task / waits for"),
+        h("select", { className: "hops-select", value: parentId, onChange: function (e) { setParentId(e.target.value); } },
+          h("option", { value: "" }, "No parent — standalone ticket"),
+          parentOptions.map(function (ticket) {
+            return h("option", { key: ticket.id, value: ticket.id }, "[" + (ticket.status || "?") + "] " + shortId(ticket.id) + " · " + (ticket.title || ticket.id));
+          })
+        ),
+        h("small", null, parentId ? "This ticket stays gated until the parent is done." : "Use this to create child work from an existing parent task.")
       ),
       h("textarea", {
         value: body,
@@ -281,6 +344,7 @@
           h("span", { className: ticket.assignee ? "hops-assigned" : "hops-unassigned" }, ticket.assignee || "UNASSIGNED")
         ),
         h("h3", null, ticket.title || ticket.id),
+        h(DependencyBadge, { summary: ticket.dependency_summary, quiet: true }),
         h(ProgressBar, { ticket: ticket }),
         h("p", { className: "hops-output-preview" }, ticket.output_preview || "No output yet. Waiting for worker signal."),
         h("div", { className: "hops-card-meta" },
@@ -572,6 +636,7 @@
           )
         ),
         h(DossierHealthPanel, { health: ticket.health }),
+        h(ChainRail, { dependencies: data.dependencies || {}, currentTicket: ticket }),
         h(TicketActionsBar, { ticket: ticket, outputItem: outputItem, logItem: logItem, onOpen: setViewerItem }),
         h(ProgressBar, { ticket: ticket }),
         h("div", { className: "hops-dossier-metrics" },
@@ -644,16 +709,47 @@
   }
 
   function AgentStrip({ agents }) {
+    const list = agents || [];
+    const active = list.filter(function (agent) { return ["running", "queued", "blocked", "stale"].indexOf(agent.availability) !== -1; }).length;
     return h("section", { className: "hops-agent-strip" },
-      (agents || []).map(function (agent) {
-        const hot = Number(agent.running_count || 0) > 0;
-        const warn = agent.name === "unassigned" || Number(agent.blocked_count || 0) > 0;
-        return h("article", { key: agent.name, className: "hops-agent-chip" + (hot ? " is-hot" : "") + (warn ? " is-warn" : "") },
-          h("i", null),
-          h("strong", null, agent.name),
-          h("span", null, "ready " + (agent.ready_count || 0) + " · run " + (agent.running_count || 0) + " · block " + (agent.blocked_count || 0))
-        );
-      })
+      h("div", { className: "hops-strip-head" },
+        h("div", null,
+          h("p", { className: "hops-kicker" }, "PROFILE STATUS"),
+          h("h2", null, "Agent roster")
+        ),
+        h("span", null, active + " active signals · " + list.length + " profiles")
+      ),
+      h("div", { className: "hops-agent-grid" },
+        list.length ? list.map(function (agent) {
+          const state = agent.availability || (Number(agent.running_count || 0) > 0 ? "running" : "idle");
+          const model = [agent.provider, agent.model].filter(Boolean).join(" / ");
+          return h("article", { key: agent.name, className: "hops-agent-chip is-" + state },
+            h("div", { className: "hops-agent-main" },
+              h("strong", null, agent.name),
+              h("div", { className: "hops-agent-state" },
+                h("i", { title: agent.availability_label || state, "aria-label": "Profile status " + (agent.availability_label || state) }),
+                h("span", null, "● " + (agent.availability_label || state))
+              )
+            ),
+            h("div", { className: "hops-agent-load" },
+              h("b", null, "ready ", agent.ready_count || 0),
+              h("b", null, "run ", agent.running_count || 0),
+              h("b", null, "block ", agent.blocked_count || 0)
+            ),
+            h("div", { className: "hops-agent-model" },
+              h("span", null, model || "model unknown")
+            ),
+            h("div", { className: "hops-agent-meta" },
+              h("span", null, "skills " + (agent.skill_count == null ? "—" : agent.skill_count)),
+              h("span", null, agent.has_env === false ? "env missing" : "env ok"),
+              h("span", null, "seen " + fmtTime(agent.last_seen_at))
+            ),
+            h("div", { className: "hops-agent-progress" },
+              h("i", { style: { width: Math.min(100, Math.max(6, ((agent.ready_count || 0) + (agent.running_count || 0) + (agent.blocked_count || 0)) * 18)) + "%" } })
+            )
+          );
+        }) : h("div", { className: "hops-empty" }, "No profile or assignee data yet.")
+      )
     );
   }
 
@@ -693,6 +789,7 @@
     if (!board) return h("div", { className: "hops-page" }, h("section", { className: "hops-hero" }, h("p", { className: "hops-kicker" }, "HERMES OPS"), h("h1", null, "H-OPS"), h("p", null, "Loading agent operations board…")));
 
     const filteredColumns = filterColumns(board.columns || [], filters);
+    const allTickets = (board.columns || []).reduce(function (items, column) { return items.concat(column.tickets || []); }, []);
     const totalTickets = (board.columns || []).reduce(function (sum, column) { return sum + (column.tickets || []).length; }, 0);
     const filteredTickets = filteredColumns.reduce(function (sum, column) { return sum + (column.tickets || []).length; }, 0);
 
@@ -726,7 +823,7 @@
       ),
       error ? h("div", { className: "hops-error-banner" }, error) : null,
       h(OpsHealthPanel, { health: board.ops_health }),
-      h(Composer, { assignees: board.assignees || [], onCreated: function (id) { selectTicket(id); refresh(); } }),
+      h(Composer, { assignees: board.assignees || [], tickets: allTickets, onCreated: function (id) { selectTicket(id); refresh(); } }),
       h(BoardFilterBar, { filters: filters, onChange: setFilters, assignees: board.assignees || [], resultCount: filteredTickets, totalCount: totalTickets }),
       h(StatusStrip, { counts: board.status_counts || {} }),
       h(AgentStrip, { agents: board.agents || [] }),

@@ -25,7 +25,8 @@ Current data:
 - active count: ready + running + blocked
 - operational health summary
 - blocked/unassigned/stale/error counts
-- profile roster summary
+- profile roster summary with workload, configuration/env, model/provider, skills, and availability
+- ticket dependency badges from `task_links`
 - filter/search controls
 
 Future controls:
@@ -71,7 +72,10 @@ Current fields:
 - profile name
 - source: configured profile, task history, run history
 - assigned task count
-- ready/running/blocked counts
+- triage/todo/ready/running/blocked/done workload counts
+- stale running count
+- human-facing availability: running/queued/blocked/stale/idle/offline/unconfigured
+- on-disk profile/config signals: gateway_running, model/provider, env, skill count, alias path
 - last seen timestamp when available
 
 Future controls:
@@ -84,6 +88,13 @@ Future controls:
 ## Dependency Map
 
 Purpose: make multi-agent task graphs visible.
+
+Current data:
+
+- card-level dependency summary: waiting parents, done parent count, unlock targets, next assignees
+- dossier Chain Rail: immediate parent tickets → current ticket → immediate child tickets
+- workflow graph endpoint: task nodes plus parent → child edges from `task_links`
+- edge state: waiting/unlocked/running/blocked/done
 
 Future data:
 

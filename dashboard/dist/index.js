@@ -366,6 +366,14 @@
   }
 
   function OpsColumn({ column, assignees, selectedId, onSelect, onAssigned }) {
+    const headings = {
+      triage: "Triage",
+      todo: "Todo",
+      ready: "Ready",
+      running: "In Progress",
+      blocked: "Blocked",
+      done: "Done",
+    };
     const labels = {
       triage: "raw ideas / needs spec",
       todo: "waiting / dependency queue",
@@ -377,7 +385,7 @@
     return h("section", { className: "hops-column hops-column-" + column.name },
       h("div", { className: "hops-column-head" },
         h("div", null,
-          h("h2", null, column.name),
+          h("h2", null, headings[column.name] || column.name),
           h("p", null, labels[column.name] || "")
         ),
         h("strong", null, (column.tickets || []).length + " ticket" + ((column.tickets || []).length === 1 ? "" : "s"))
